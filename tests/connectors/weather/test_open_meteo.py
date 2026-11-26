@@ -1,5 +1,3 @@
-
-
 import httpx
 import pandas as pd
 import pytest
@@ -53,7 +51,11 @@ async def test_collect_returns_dataframe(
     location,
     api_response,
 ):
+    captured_params = {}
+
     async def handler(request):
+        captured_params.update(request.url.params)
+
         return httpx.Response(
             200,
             json=api_response,
@@ -61,21 +63,55 @@ async def test_collect_returns_dataframe(
 
     transport = httpx.MockTransport(handler)
 
-    async with httpx.AsyncClient(
-        transport=transport
-    ) as client:
+    async with httpx.AsyncClient(transport=transport) as client:
         collector = OpenMeteoCollector(client=client)
 
         result = await collector.collect(location)
 
+    expected = {
+        "location",
+        "latitude",
+        "longitude",
+        "valid_at",
+        "temperature_celsius",
+        "relative_humidity_pct",
+        "precipitation_mm",
+        "wind_speed_kmh",
+        "source",
+        "source_api",
+        "fetched_at",
+    }
+
     assert isinstance(result, pd.DataFrame)
     assert len(result) == 2
+    assert expected.issubset(result.columns)
 
     assert result.iloc[0]["location"] == "Lagos"
     assert result.iloc[0]["temperature_celsius"] == 27.1
 
     assert result.iloc[0]["source"] == "open-meteo"
+    assert captured_params["timezone"] == "GMT"
+
     assert result["fetched_at"].notna().all()
+    assert isinstance(result["valid_at"].dtype, pd.DatetimeTZDtype)
+    assert str(result["valid_at"].dtype.tz) == "UTC"
+
+    expected_timestamp = pd.Timestamp(
+        api_response["hourly"]["time"][0],
+        tz="UTC",
+    )
+    assert result.iloc[0]["valid_at"] == expected_timestamp
+
+    assert result.iloc[0]["source_api"] == "forecast"
+
+
+def test_collect_rejects_unexpected_units(location, api_response):
+    api_response["hourly_units"]["temperature_2m"] = "°F"
+
+    payload = OpenMeteoCollector._validate_response(api_response)
+
+    with pytest.raises(WeatherResponseError, match="Unexpected Open-Meteo units"):
+        OpenMeteoCollector._to_dataframe(payload, location)
 
 
 @pytest.mark.asyncio
@@ -91,9 +127,7 @@ async def test_collect_preserves_missing_values(
     async def handler(request):
         return httpx.Response(200, json=api_response)
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         collector = OpenMeteoCollector(client=client)
         result = await collector.collect(location)
 
@@ -110,9 +144,7 @@ async def test_collect_rejects_invalid_response(
             json={"unexpected": "response"},
         )
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         collector = OpenMeteoCollector(client=client)
 
         with pytest.raises(WeatherResponseError):
@@ -127,9 +159,7 @@ async def test_collect_handles_http_error(location):
             json={"error": True},
         )
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         collector = OpenMeteoCollector(client=client)
 
         with pytest.raises(WeatherAPIError):
@@ -151,9 +181,7 @@ def test_dataframe_has_expected_columns(
     location,
     api_response,
 ):
-    payload = OpenMeteoCollector._validate_response(
-        api_response
-    )
+    payload = OpenMeteoCollector._validate_response(api_response)
 
     result = OpenMeteoCollector._to_dataframe(
         payload,
@@ -164,14 +192,15 @@ def test_dataframe_has_expected_columns(
         "location",
         "latitude",
         "longitude",
-        "observed_at",
+        "valid_at",
         "temperature_celsius",
         "relative_humidity_pct",
         "precipitation_mm",
         "wind_speed_kmh",
         "source",
+        "source_api",
         "fetched_at",
     }
 
     assert expected.issubset(result.columns)
-    assert result.attrs["timezone"] == "Africa/Lagos"
+    assert "observed_at" not in result.columns

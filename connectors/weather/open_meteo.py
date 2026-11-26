@@ -6,10 +6,7 @@ import httpx
 import pandas as pd
 from pydantic import ValidationError
 
-from connectors.weather.schemas import (
-    OpenMeteoResponse,
-    WeatherLocation,
-)
+from connectors.weather.schemas import OpenMeteoResponse, WeatherLocation
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 
@@ -19,6 +16,14 @@ HOURLY_VARIABLES = [
     "precipitation",
     "wind_speed_10m",
 ]
+
+EXPECTED_UNITS = {
+    "time": "iso8601",
+    "temperature_2m": "°C",
+    "relative_humidity_2m": "%",
+    "precipitation": "mm",
+    "wind_speed_10m": "km/h",
+}
 
 
 class WeatherCollectorError(Exception):
@@ -55,21 +60,15 @@ class OpenMeteoCollector:
             "longitude": location.longitude,
             "hourly": ",".join(HOURLY_VARIABLES),
             "forecast_days": forecast_days,
-            "timezone": "auto",
+            "timezone": "GMT",
         }
 
         response = await self._request(params)
         payload = self._validate_response(response)
 
-        return self._to_dataframe(
-            payload=payload,
-            location=location,
-        )
+        return self._to_dataframe(payload, location)
 
-    async def _request(
-        self,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
+    async def _request(self, params: dict[str, Any]) -> dict[str, Any]:
         try:
             if self.client is not None:
                 response = await self.client.get(
@@ -86,7 +85,6 @@ class OpenMeteoCollector:
                     )
 
             response.raise_for_status()
-
             return response.json()
 
         except httpx.TimeoutException as exc:
@@ -120,42 +118,57 @@ class OpenMeteoCollector:
 
         try:
             return OpenMeteoResponse.model_validate(response)
-
         except ValidationError as exc:
             raise WeatherResponseError(
                 f"Invalid Open-Meteo response: {exc}"
             ) from exc
 
     @staticmethod
+    def _validate_units(payload: OpenMeteoResponse) -> None:
+        actual_units = payload.hourly_units
+
+        mismatches = {
+            variable: {
+                "expected": expected,
+                "actual": actual_units.get(variable),
+            }
+            for variable, expected in EXPECTED_UNITS.items()
+            if actual_units.get(variable) != expected
+        }
+
+        if mismatches:
+            raise WeatherResponseError(
+                f"Unexpected Open-Meteo units: {mismatches}"
+            )
+
+    @classmethod
     def _to_dataframe(
+        cls,
         payload: OpenMeteoResponse,
         location: WeatherLocation,
     ) -> pd.DataFrame:
+        cls._validate_units(payload)
+
         hourly = payload.hourly
 
-        df = pd.DataFrame({
-            "observed_at": hourly.time,
-            "temperature_celsius": hourly.temperature_2m,
-            "relative_humidity_pct": hourly.relative_humidity_2m,
-            "precipitation_mm": hourly.precipitation,
-            "wind_speed_kmh": hourly.wind_speed_10m,
-        })
+        df = pd.DataFrame(
+            {
+                "valid_at": pd.to_datetime(hourly.time, utc=True),
+                "temperature_celsius": hourly.temperature_2m,
+                "relative_humidity_pct": hourly.relative_humidity_2m,
+                "precipitation_mm": hourly.precipitation,
+                "wind_speed_kmh": hourly.wind_speed_10m,
+            }
+        )
 
         fetched_at = datetime.now(UTC)
 
         df.insert(0, "location", location.name)
         df.insert(1, "latitude", location.latitude)
         df.insert(2, "longitude", location.longitude)
+
         df["source"] = "open-meteo"
+        df["source_api"] = "forecast"
         df["fetched_at"] = fetched_at
-
-        df["observed_at"] = pd.to_datetime(
-            df["observed_at"]
-        )
-
-        # Preserve source timezone and units for downstream consumers.
-        df.attrs["source"] = "open-meteo"
-        df.attrs["timezone"] = payload.timezone
-        df.attrs["units"] = payload.hourly_units
 
         return df
