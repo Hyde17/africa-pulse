@@ -1,3 +1,4 @@
+
 # Foreign-Exchange Source Comparison
 
 ## Purpose
@@ -19,17 +20,67 @@ A source should be selected based on the rate definition required by the product
 | Criterion | CBN | CBK | Frankfurter |
 |---|---|---|---|
 | Rate definition | Official NFEM rate and related market statistics | Indicative daily mean, buying, and selling rates | Blended mid-market rate by default; provider-specific rates may be available |
-| African currency coverage | Nigeria-focused | Kenya-focused, with multiple currencies | Multiple African currencies, including NGN, KES, EGP, ZAR, and CDF |
+| African currency coverage | Nigeria-focused | Kenya-focused, with multiple currencies | NGN, KES, EGP, and CDF successfully verified; broader coverage requires validation |
 | City-level rates | Not established | Not established | Not a city-level feed |
 | Access method | Official website | Website and historical-data/export functionality | Documented REST API |
 | API authentication | Unknown; supported public API not confirmed | Unknown; supported public API not confirmed | No API key required |
 | Update frequency | Daily rate information | Daily indicative rates | Generally daily; varies by provider and currency |
 | Historical availability | Published history exists; completeness and retrieval method need verification | Historical datasets linked back to 2001 | Historical coverage from 1948, depending on currency/provider |
-| Sample live response verified | No | No | No |
+| Sample live response verified | No | No | Yes — HTTP 200 for all four tested currency pairs |
+| Verification date | Pending | Pending | 2026-11-26 |
 | Commercial use | Unknown; clarify with CBN | Unknown; clarify with CBK | Blended rates documented as free for commercial use; upstream terms may differ |
 | Bulk storage | Requires clarification | Requires clarification | Daily caching/storage is encouraged |
 | Redistribution | Permissions need clarification | Permissions need clarification | Depends on blended versus provider-specific data and applicable terms |
-| Overall assessment | Candidate for official Nigerian rate | Candidate for official Kenyan reference data | Candidate for broad multi-currency ingestion |
+| Overall assessment | Candidate for official Nigerian rate | Candidate for official Kenyan reference data | Verified candidate for broad multi-currency ingestion |
+
+## Frankfurter live API verification
+
+A live request was made to the Frankfurter v2 rates endpoint on 2026-11-26.
+
+**Request:**
+
+`GET https://api.frankfurter.dev/v2/rates?base=USD&quotes=NGN,KES,EGP,CDF`
+
+**HTTP status:** `200`
+
+**Result:** All four requested currency pairs returned rate observations.
+
+Trimmed response:
+
+```json
+[
+  {
+    "date": "2026-11-26",
+    "base": "USD",
+    "quote": "NGN",
+    "rate": 1385.65
+  },
+  {
+    "date": "2026-11-26",
+    "base": "USD",
+    "quote": "KES",
+    "rate": 130.02
+  },
+  {
+    "date": "2026-11-26",
+    "base": "USD",
+    "quote": "EGP",
+    "rate": 54.447
+  },
+  {
+    "date": "2026-11-26",
+    "base": "USD",
+    "quote": "CDF",
+    "rate": 2289.11
+  }
+]
+```
+
+The response confirms that Frankfurter returned all four requested currency pairs on the tested date.
+
+The rates represent units of the quote currency per one unit of the base currency. For example, the NGN observation represents 1,385.65 Nigerian naira per US dollar.
+
+This test establishes live rate availability for the four requested pairs on the verification date. It does not establish complete historical coverage, availability on every date, or provider-specific rate availability.
 
 ## Official rates versus parallel-market rates
 
@@ -91,16 +142,21 @@ Before publishing a redistributed dataset, retain the relevant terms, record the
 
 ## Recommendation
 
-**Use Frankfurter as the initial candidate for broad, daily, multi-currency ingestion**, subject to successful live-response verification and a review of the applicable terms.
+**Use Frankfurter as the initial candidate for broad, daily, multi-currency ingestion.**
 
-Keep CBN and CBK as country-specific reference sources when their published rate definitions are explicitly required. Do not replace their official or indicative rates with Frankfurter's blended series without recording the change in source and meaning.
+A live request to the v2 rates endpoint on 2026-11-26 returned successful observations for all four tested currencies: NGN, KES, EGP, and CDF. This establishes that Frankfurter can return rate observations for these currency pairs on the tested date.
 
-This recommendation is provisional because no successful live response has yet been captured for the proposed Frankfurter request, and licensing questions remain unresolved for the central-bank sources.
+Keep CBN and CBK as country-specific reference sources when their published rate definitions are explicitly required. Their programmatic access and live-response verification remain outstanding.
+
+Do not replace CBN's official NFEM rate or CBK's indicative rates with Frankfurter's blended series without recording the change in source and rate meaning.
+
+The recommendation remains subject to validation of historical and provider-specific coverage, and review of the applicable licensing and redistribution terms.
 
 ## Outstanding research checklist
 
-- [ ] Execute a real request to Frankfurter for representative African currencies and capture the HTTP status and actual response.
-- [ ] Confirm quote direction, response schema, observation date, and missing-currency behaviour.
+- [x] Execute a real request to Frankfurter for representative African currencies and capture the HTTP status and actual response.
+- [x] Confirm quote direction, response schema, observation date, and returned currency pairs for NGN, KES, EGP, and CDF.
+- [ ] Verify missing-currency behaviour and historical availability for the required currencies and dates.
 - [ ] Verify whether Frankfurter can return the required provider-specific rates for each target currency.
 - [ ] Capture real observations from the CBN and CBK pages or their published downloads.
 - [ ] Verify source dates, publication timing, historical completeness, and correction behaviour.
@@ -119,5 +175,6 @@ This recommendation is provisional because no successful live response has yet b
 
 ## Research status
 
-- **Research date:** 2026-10-29
-- **Status:** Draft comparison; live sample verification and some licensing questions remain outstanding.
+- **Initial research date:** 2026-10-29
+- **Latest verification date:** 2026-11-26
+- **Status:** Frankfurter live rate verification completed for four currency pairs. CBN and CBK live-response verification, provider-specific coverage, and some licensing questions remain outstanding.
